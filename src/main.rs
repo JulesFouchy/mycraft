@@ -227,34 +227,34 @@ impl CameraController {
                 input:
                     KeyboardInput {
                         state,
-                        virtual_keycode: Some(keycode),
+                        scancode,
                         ..
                     },
                 ..
             } => {
                 let is_pressed = *state == ElementState::Pressed;
-                match keycode {
-                    VirtualKeyCode::Space => {
+                match scancode {
+                    57 /*space*/ => {
                         self.is_up_pressed = is_pressed;
                         true
                     }
-                    VirtualKeyCode::LShift => {
+                    42 /*shift*/ => {
                         self.is_down_pressed = is_pressed;
                         true
                     }
-                    VirtualKeyCode::W | VirtualKeyCode::Up => {
+                    17 /*W*/ => {
                         self.is_forward_pressed = is_pressed;
                         true
                     }
-                    VirtualKeyCode::A | VirtualKeyCode::Left => {
+                    30 /*A*/ => {
                         self.is_left_pressed = is_pressed;
                         true
                     }
-                    VirtualKeyCode::S | VirtualKeyCode::Down => {
+                    31 /*S*/ => {
                         self.is_backward_pressed = is_pressed;
                         true
                     }
-                    VirtualKeyCode::D | VirtualKeyCode::Right => {
+                    32 /*D*/ => {
                         self.is_right_pressed = is_pressed;
                         true
                     }
