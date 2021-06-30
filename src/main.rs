@@ -476,6 +476,24 @@ impl State {
     }
 }
 
+fn set_capture_cursor(window: &Window, is_capturing: bool) {
+    window.set_cursor_visible(!is_capturing);
+    match window.set_cursor_grab(is_capturing) {
+        Ok(()) => {},
+        Err(err) => eprintln!("[set_capture_cursor] {}", err),
+    }
+    // Center the cursor when it becomes visible again
+    if !is_capturing {
+        match window.set_cursor_position(winit::dpi::PhysicalPosition{
+            x: window.inner_size().width/2,
+            y: window.inner_size().height/2,
+        }) {
+            Ok(()) => {},
+            Err(err) => eprintln!("[set_capture_cursor] {}", err),
+        }
+    }
+}
+
 fn main() {
     env_logger::init();
     let event_loop = EventLoop::new();
@@ -486,8 +504,7 @@ fn main() {
     // Since main can't be async, we're going to need to block
     let mut state = block_on(State::new(&window));
     
-    window.set_cursor_visible(false);
-    window.set_cursor_grab(true);
+    set_capture_cursor(&window, true);
 
     event_loop.run(move |event, _, control_flow| {
         match event {
@@ -503,15 +520,13 @@ fn main() {
                                 state: ElementState::Pressed,
                                 virtual_keycode: Some(VirtualKeyCode::Escape),
                                 ..
-                            } => { 
-                                window.set_cursor_grab(false);
-                                window.set_cursor_visible(true);
+                            } => {
+                                set_capture_cursor(&window, false);
                             },
                             _ => {}
                         },
                         WindowEvent::MouseInput {button: MouseButton::Left, ..} => {
-                            window.set_cursor_grab(true);
-                            window.set_cursor_visible(false);
+                            set_capture_cursor(&window, true);
                         }
                         WindowEvent::Resized(physical_size) => {
                             state.resize(*physical_size);
