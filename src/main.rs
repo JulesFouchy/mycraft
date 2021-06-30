@@ -202,6 +202,7 @@ struct State {
     uniforms: Uniforms,
     uniform_buffer: wgpu::Buffer,
     uniform_bind_group: wgpu::BindGroup,
+    input_state: InputState,
 }
 
 impl State {
@@ -386,6 +387,10 @@ impl State {
         });
         let num_indices = INDICES.len() as u32;
 
+        let input_state = InputState {
+            is_cursor_captured: false,
+        };
+
         Self {
             surface,
             device,
@@ -404,6 +409,7 @@ impl State {
             uniform_buffer,
             uniform_bind_group,
             uniforms,
+            input_state,
         }
     }
 
@@ -421,7 +427,7 @@ impl State {
     }
 
     fn process_device_event(&mut self, event: &DeviceEvent) -> bool {
-        self.camera_controller.process_device_event(event)
+        self.camera_controller.process_device_event(event, self.input_state.is_cursor_captured)
     }
 
     fn update(&mut self) {
@@ -474,24 +480,29 @@ impl State {
 
         Ok(())
     }
-}
 
-fn set_capture_cursor(window: &Window, is_capturing: bool) {
-    window.set_cursor_visible(!is_capturing);
-    match window.set_cursor_grab(is_capturing) {
-        Ok(()) => {},
-        Err(err) => eprintln!("[set_capture_cursor] {}", err),
-    }
-    // Center the cursor when it becomes visible again
-    if !is_capturing {
-        match window.set_cursor_position(winit::dpi::PhysicalPosition{
-            x: window.inner_size().width/2,
-            y: window.inner_size().height/2,
-        }) {
+    fn set_capture_cursor(&mut self, window: &Window, is_capturing: bool) {
+        self.input_state.is_cursor_captured = is_capturing;
+        window.set_cursor_visible(!is_capturing);
+        match window.set_cursor_grab(is_capturing) {
             Ok(()) => {},
             Err(err) => eprintln!("[set_capture_cursor] {}", err),
         }
+        // Center the cursor when it becomes visible again
+        if !is_capturing {
+            match window.set_cursor_position(winit::dpi::PhysicalPosition{
+                x: window.inner_size().width/2,
+                y: window.inner_size().height/2,
+            }) {
+                Ok(()) => {},
+                Err(err) => eprintln!("[set_capture_cursor] {}", err),
+            }
+        }
     }
+}
+
+struct InputState {
+    is_cursor_captured: bool,
 }
 
 fn main() {
@@ -504,7 +515,7 @@ fn main() {
     // Since main can't be async, we're going to need to block
     let mut state = block_on(State::new(&window));
     
-    set_capture_cursor(&window, true);
+    state.set_capture_cursor(&window, true);
 
     event_loop.run(move |event, _, control_flow| {
         match event {
@@ -521,12 +532,12 @@ fn main() {
                                 virtual_keycode: Some(VirtualKeyCode::Escape),
                                 ..
                             } => {
-                                set_capture_cursor(&window, false);
+                                state.set_capture_cursor(&window, false);
                             },
                             _ => {}
                         },
                         WindowEvent::MouseInput {button: MouseButton::Left, ..} => {
-                            set_capture_cursor(&window, true);
+                            state.set_capture_cursor(&window, true);
                         }
                         WindowEvent::Resized(physical_size) => {
                             state.resize(*physical_size);

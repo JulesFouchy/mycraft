@@ -128,15 +128,20 @@ impl CameraController {
             }
       }
 
-      pub fn process_device_event(&mut self, event: &DeviceEvent) -> bool {
+      pub fn process_device_event(&mut self, event: &DeviceEvent, is_cursor_captured: bool) -> bool {
             match event {
                   DeviceEvent::MouseMotion {
-                  delta,
-                  ..
+                        delta,
+                        ..
                   } => {
-                  self.angle_ground_delta -= cgmath::Rad(delta.0 as f32);
-                  self.angle_up_delta     -= cgmath::Rad(delta.1 as f32);
-                  true
+                        if is_cursor_captured {
+                              self.angle_ground_delta -= cgmath::Rad(delta.0 as f32);
+                              self.angle_up_delta     -= cgmath::Rad(delta.1 as f32);
+                              true
+                        }
+                        else {
+                              false
+                        }
                   }
                   _ => false,
             }
