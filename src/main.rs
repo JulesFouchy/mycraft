@@ -162,9 +162,9 @@ pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
 );
 
 struct Camera {
-    eye: cgmath::Point3<f32>,
-    target: cgmath::Point3<f32>,
-    up: cgmath::Vector3<f32>,
+    position: cgmath::Point3<f32>,
+    angle_ground: cgmath::Rad<f32>,
+    angle_up: cgmath::Rad<f32>,
     aspect: f32,
     fovy: f32,
     znear: f32,
@@ -173,9 +173,36 @@ struct Camera {
 
 impl Camera {
     fn build_view_projection_matrix(&self) -> cgmath::Matrix4<f32> {
-        let view = cgmath::Matrix4::look_at_rh(self.eye, self.target, self.up);
+        let view = cgmath::Matrix4::look_at_rh(self.position, self.position + self.look_direction(), cgmath::Vector3::unit_z());
         let proj = cgmath::perspective(cgmath::Deg(self.fovy), self.aspect, self.znear, self.zfar);
         proj * view
+    }
+
+    fn look_direction(&self) -> cgmath::Vector3<f32> {
+        use cgmath::Angle;
+        return (
+            Angle::cos(self.angle_up) * Angle::cos(self.angle_ground),
+            Angle::cos(self.angle_up) * Angle::sin(self.angle_ground),
+            Angle::sin(self.angle_up),
+        ).into()
+    }
+
+    fn forward_direction(&self) -> cgmath::Vector3<f32> {
+        use cgmath::Angle;
+        return (
+            Angle::cos(self.angle_ground),
+            Angle::sin(self.angle_ground),
+            0.,
+        ).into()
+    }
+
+    fn right_direction(&self) -> cgmath::Vector3<f32> {
+        use cgmath::Angle;
+        return (
+            Angle::sin(self.angle_ground),
+            -Angle::cos(self.angle_ground),
+            0.,
+        ).into()
     }
 }
 
@@ -200,6 +227,8 @@ impl Uniforms {
 
 struct CameraController {
     speed: f32,
+    angle_ground_delta: cgmath::Rad<f32>,
+    angle_up_delta: cgmath::Rad<f32>,
     is_up_pressed: bool,
     is_down_pressed: bool,
     is_forward_pressed: bool,
@@ -212,6 +241,8 @@ impl CameraController {
     fn new(speed: f32) -> Self {
         Self {
             speed,
+            angle_ground_delta: cgmath::Rad(0.),
+            angle_up_delta: cgmath::Rad(0.),
             is_up_pressed: false,
             is_down_pressed: false,
             is_forward_pressed: false,
@@ -265,36 +296,38 @@ impl CameraController {
         }
     }
 
-    fn update_camera(&self, camera: &mut Camera) {
-        use cgmath::InnerSpace;
-        let forward = camera.target - camera.eye;
-        let forward_norm = forward.normalize();
-        let forward_mag = forward.magnitude();
-
-        // Prevents glitching when camera gets too close to the
-        // center of the scene.
-        if self.is_forward_pressed && forward_mag > self.speed {
-            camera.eye += forward_norm * self.speed;
+    fn process_device_event(&mut self, event: &DeviceEvent) -> bool {
+        match event {
+            DeviceEvent::MouseMotion {
+                delta,
+                ..
+            } => {
+                self.angle_ground_delta -= cgmath::Rad(delta.0 as f32);
+                self.angle_up_delta     -= cgmath::Rad(delta.1 as f32);
+                true
+            }
+            _ => false,
         }
-        if self.is_backward_pressed {
-            camera.eye -= forward_norm * self.speed;
-        }
+    }
 
-        let right = forward_norm.cross(camera.up);
-
-        // Redo radius calc in case the up/ down is pressed.
-        let forward = camera.target - camera.eye;
-        let forward_mag = forward.magnitude();
-
-        if self.is_right_pressed {
-            // Rescale the distance between the target and eye so
-            // that it doesn't change. The eye therefore still
-            // lies on the circle made by the target and eye.
-            camera.eye = camera.target - (forward + right * self.speed).normalize() * forward_mag;
+    fn update_camera(&mut self, camera: &mut Camera) {
+        const ZERO: cgmath::Vector3<f32> = cgmath::Vector3{x: 0., y: 0., z: 0.};
+        let direction =
+            if self.is_forward_pressed  {  camera.forward_direction() } else { ZERO } +
+            if self.is_backward_pressed { -camera.forward_direction() } else { ZERO } +
+            if self.is_right_pressed    {  camera.right_direction  () } else { ZERO } +
+            if self.is_left_pressed     { -camera.right_direction  () } else { ZERO } +
+            if self.is_up_pressed       {  cgmath::Vector3::unit_z () } else { ZERO } +
+            if self.is_down_pressed     { -cgmath::Vector3::unit_z () } else { ZERO }
+        ;
+        let magnitude = cgmath::InnerSpace::magnitude(direction);
+        if magnitude > 0.001 {
+            camera.position += direction / magnitude * self.speed;
         }
-        if self.is_left_pressed {
-            camera.eye = camera.target - (forward - right * self.speed).normalize() * forward_mag;
-        }
+        camera.angle_ground += self.angle_ground_delta * 0.001;
+        camera.angle_up     += self.angle_up_delta     * 0.001; 
+        self.angle_ground_delta = cgmath::Rad(0.);
+        self.angle_up_delta = cgmath::Rad(0.);
     }
 }
 
@@ -402,9 +435,9 @@ impl State {
         });
 
         let camera = Camera {
-            eye: (0.0, 2.0, 1.0).into(),
-            target: (0.0, 0.0, 0.0).into(),
-            up: cgmath::Vector3::unit_z(),
+            position: (-10.0, 2.0, 1.0).into(),
+            angle_ground: cgmath::Rad(0.),
+            angle_up: cgmath::Rad(0.),
             aspect: sc_desc.width as f32 / sc_desc.height as f32,
             fovy: 45.0,
             znear: 0.1,
@@ -544,6 +577,10 @@ impl State {
         self.camera_controller.process_events(event)
     }
 
+    fn process_device_event(&mut self, event: &DeviceEvent) -> bool {
+        self.camera_controller.process_device_event(event)
+    }
+
     fn update(&mut self) {
         self.camera_controller.update_camera(&mut self.camera);
         self.uniforms.update_view_proj(&self.camera);
@@ -605,6 +642,9 @@ fn main() {
 
     // Since main can't be async, we're going to need to block
     let mut state = block_on(State::new(&window));
+    
+    window.set_cursor_visible(false);
+    window.set_cursor_grab(true);
 
     event_loop.run(move |event, _, control_flow| {
         match event {
@@ -620,9 +660,16 @@ fn main() {
                                 state: ElementState::Pressed,
                                 virtual_keycode: Some(VirtualKeyCode::Escape),
                                 ..
-                            } => *control_flow = ControlFlow::Exit,
+                            } => { 
+                                window.set_cursor_grab(false);
+                                window.set_cursor_visible(true);
+                            },
                             _ => {}
                         },
+                        WindowEvent::MouseInput {button: MouseButton::Left, ..} => {
+                            window.set_cursor_grab(true);
+                            window.set_cursor_visible(false);
+                        }
                         WindowEvent::Resized(physical_size) => {
                             state.resize(*physical_size);
                         }
@@ -633,6 +680,12 @@ fn main() {
                         _ => {}
                     }
                 }
+            }
+            Event::DeviceEvent {
+                ref event,
+                ..
+            } => {
+                state.process_device_event(event);
             }
             Event::RedrawRequested(_) => {
                 state.update();
