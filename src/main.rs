@@ -154,6 +154,30 @@ const INDICES: &[u16] = &[
     23, 22, 20, 22, 21, 20,
 ];
 
+const SKY_VERTICES: &[Vertex] = &[
+    Vertex {
+        position: [-1., -1., 0.],
+        tex_coords: [0., 0.],
+    },
+    Vertex {
+        position: [1., -1., 0.],
+        tex_coords: [1., 0.],
+    },
+    Vertex {
+        position: [1., 1., 0.],
+        tex_coords: [1., 1.],
+    },
+    Vertex {
+        position: [-1., 1., 0.],
+        tex_coords: [0., 1.],
+    },
+];
+
+#[rustfmt::skip]
+const SKY_INDICES: &[u16] = &[
+    0, 1, 2, 0, 2, 3,
+];
+
 #[rustfmt::skip]
 pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
     1.0, 0.0, 0.0, 0.0,
@@ -190,13 +214,15 @@ struct State {
     swap_chain: wgpu::SwapChain,
     size: winit::dpi::PhysicalSize<u32>,
     render_pipeline: wgpu::RenderPipeline,
+    sky_render_pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     num_indices: u32,
-    #[allow(dead_code)]
+    sky_vertex_buffer: wgpu::Buffer,
+    sky_index_buffer: wgpu::Buffer,
+    sky_num_indices: u32,
     diffuse_texture: texture::Texture,
     diffuse_bind_group: wgpu::BindGroup,
-    // NEW!
     camera: Camera,
     camera_controller: CameraController,
     uniforms: Uniforms,
@@ -328,10 +354,23 @@ impl State {
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
 
+        let sky_shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+            label: Some("Sky Shader"),
+            flags: wgpu::ShaderFlags::all(),
+            source: wgpu::ShaderSource::Wgsl(include_str!("sky.wgsl").into()),
+        });
+
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
                 bind_group_layouts: &[&texture_bind_group_layout, &uniform_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+
+        let sky_render_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Sky Render Pipeline Layout"),
+                bind_group_layouts: &[&uniform_bind_group_layout],
                 push_constant_ranges: &[],
             });
 
@@ -375,6 +414,43 @@ impl State {
             },
         });
 
+        let sky_render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Sky Pipeline"),
+            layout: Some(&sky_render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &sky_shader,
+                entry_point: "main",
+                buffers: &[Vertex::desc()],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &sky_shader,
+                entry_point: "main",
+                targets: &[wgpu::ColorTargetState {
+                    format: sc_desc.format,
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent::REPLACE,
+                        alpha: wgpu::BlendComponent::REPLACE,
+                    }),
+                    write_mask: wgpu::ColorWrite::ALL,
+                }],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                polygon_mode: wgpu::PolygonMode::Fill,
+                clamp_depth: false,
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+        });
+
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
             contents: bytemuck::cast_slice(VERTICES),
@@ -386,6 +462,18 @@ impl State {
             usage: wgpu::BufferUsage::INDEX,
         });
         let num_indices = INDICES.len() as u32;
+
+        let sky_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Sky Vertex Buffer"),
+            contents: bytemuck::cast_slice(SKY_VERTICES),
+            usage: wgpu::BufferUsage::VERTEX,
+        });
+        let sky_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Sky Index Buffer"),
+            contents: bytemuck::cast_slice(SKY_INDICES),
+            usage: wgpu::BufferUsage::INDEX,
+        });
+        let sky_num_indices = SKY_INDICES.len() as u32;
 
         let input_state = InputState {
             is_cursor_captured: false,
@@ -399,9 +487,13 @@ impl State {
             swap_chain,
             size,
             render_pipeline,
+            sky_render_pipeline,
             vertex_buffer,
             index_buffer,
             num_indices,
+            sky_vertex_buffer,
+            sky_index_buffer,
+            sky_num_indices,
             diffuse_texture,
             diffuse_bind_group,
             camera,
@@ -449,6 +541,33 @@ impl State {
                 label: Some("Render Encoder"),
             });
 
+        // Fullscreen quad for the Sky
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Sky"),
+                color_attachments: &[wgpu::RenderPassColorAttachment {
+                    view: &frame.view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.,
+                            g: 0.,
+                            b: 0.,
+                            a: 0.,
+                        }),
+                        store: true,
+                    },
+                }],
+                depth_stencil_attachment: None,
+            });
+
+            render_pass.set_pipeline(&self.sky_render_pipeline);
+            render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, self.sky_vertex_buffer.slice(..));
+            render_pass.set_index_buffer(self.sky_index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+            render_pass.draw_indexed(0..self.sky_num_indices, 0, 0..1);
+        }
+        // Cube
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
@@ -456,12 +575,7 @@ impl State {
                     view: &frame.view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.1,
-                            g: 0.2,
-                            b: 0.3,
-                            a: 1.0,
-                        }),
+                        load: wgpu::LoadOp::Load,
                         store: true,
                     },
                 }],
